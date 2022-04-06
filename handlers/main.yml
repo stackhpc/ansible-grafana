@@ -4,6 +4,7 @@
   service:
     name: grafana-server
     state: restarted
+  when: "grafana_state != 'stopped'"
   tags:
     - grafana_run
 

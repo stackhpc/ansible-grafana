@@ -251,3 +251,7 @@ grafana_environment: {}
 grafana_panels: {}
 #  disable_sanitize_html: false
 #  enable_alpha: false
+
+# Control service state
+grafana_enabled: true
+grafana_state: started

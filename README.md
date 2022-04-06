@@ -59,7 +59,8 @@ All variables which can be overridden are stored in [defaults/main.yml](defaults
 | `grafana_environment` | {} | Optional Environment param for Grafana installation, useful ie for setting http_proxy |
 | `grafana_plugins` | [] |  List of Grafana plugins which should be installed |
 | `grafana_alert_notifications` | [] | List of alert notification channels to be created, updated, or deleted |
-
+| `grafana_state` | `started` | Grafana service state after this role, either `started` or `stopped` (restarts will happen as required for changed configuration etc. only in `started` mode) |
+| `grafana_enabled` | true | Whether Grafana service is enabled on restart |
 Datasource example:
 
 ```yaml

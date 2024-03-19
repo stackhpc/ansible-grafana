@@ -16,16 +16,10 @@
 
 - include: preflight.yml
   tags:
-    - grafana_install
     - grafana_configure
     - grafana_datasources
     - grafana_notifications
     - grafana_dashboards
-
-- include: install.yml
-  become: true
-  tags:
-    - grafana_install
 
 - include: configure.yml
   become: true

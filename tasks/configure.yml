@@ -1,87 +1,107 @@
 ---
-- name: Ensure grafana configuration directories exist
-  file:
-    path: "{{ item }}"
-    state: directory
-    owner: root
-    group: grafana
-  with_items:
-    - "/etc/grafana"
-    - "/etc/grafana/datasources"
-    - "/etc/grafana/provisioning"
-    - "/etc/grafana/provisioning/datasources"
-    - "/etc/grafana/provisioning/dashboards"
-    - "/etc/grafana/provisioning/notifiers"
-    - "/etc/grafana/provisioning/plugins"
+- name: Gather variables for each operating system
+  include_vars: "{{ item }}"
+  with_first_found:
+    - "{{ ansible_distribution | lower }}-{{ ansible_distribution_version | lower }}.yml"
+    - "{{ ansible_distribution | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+    - "{{ ansible_os_family | lower }}-{{ ansible_distribution_major_version | lower }}.yml"
+    - "{{ ansible_distribution | lower }}.yml"
+    - "{{ ansible_os_family | lower }}.yml"
+  tags:
+    - grafana_install
+    - grafana_configure
+    - grafana_datasources
+    - grafana_notifications
+    - grafana_dashboards
 
-- name: Create grafana main configuration file
-  template:
-    src: grafana.ini.j2
-    dest: /etc/grafana/grafana.ini
-    owner: root
-    group: grafana
-    mode: 0640
-  no_log: true
-  notify: restart grafana
+- include: preflight.yml
+  tags:
+    - grafana_configure
+    - grafana_datasources
+    - grafana_notifications
+    - grafana_dashboards
 
-- name: Create grafana LDAP configuration file
-  template:
-    src: ldap.toml.j2
-    dest: "{{ grafana_auth.ldap.config_file | default('/etc/grafana/ldap.toml') }}"
-    owner: root
-    group: grafana
-    mode: 0640
+- include: core_configure.yml
+  become: true
+  tags:
+    - grafana_configure
+
+- include: plugins.yml
+  when: grafana_plugins != []
+  tags:
+    - grafana_configure
+
+- name: Restart grafana before configuring datasources and dashboards
+  meta: flush_handlers
+  tags:
+    - grafana_install
+    - grafana_configure
+    - grafana_datasources
+    - grafana_notifications
+    - grafana_dashboards
+    - grafana_run
+
+- name: Wait for grafana to start (http/s)
+  wait_for:
+    host: "{{ grafana_address }}"
+    port: "{{ grafana_port }}"
   when:
-    - "'ldap' in grafana_auth"
-    - "'enabled' not in grafana_auth.ldap or grafana_auth.ldap.enabled"
-  no_log: true
-  notify: restart grafana
+    - grafana_state != 'stopped'
+    - grafana_server.protocol is undefined or grafana_server.protocol in ['http', 'https']
+  tags:
+    - grafana_install
+    - grafana_configure
+    - grafana_datasources
+    - grafana_notifications
+    - grafana_dashboards
+    - grafana_run
 
-- name: Create grafana directories
-  file:
-    path: "{{ item }}"
-    state: directory
-    mode: 0755
-    owner: "grafana"
-    group: "grafana"
-  with_items:
-    - "{{ grafana_logs_dir }}"
-    - "{{ grafana_data_dir }}"
-    - "{{ grafana_data_dir }}/dashboards"
-    - "{{ grafana_data_dir }}/plugins"
-
-- block:
-    - name: Create grafana socket directory
-      file:
-        path: "{{ grafana_server.socket | dirname }}"
-        state: directory
-        mode: 0775
-        owner: "grafana"
-        group: "grafana"
-
-    - name: Ensure grafana socket directory created on startup
-      template:
-        src: tmpfiles.j2
-        dest: /etc/tmpfiles.d/grafana.conf
-        owner: root
-        group: root
-        mode: 0644
+- name: Wait for grafana to start (socket)
+  wait_for:
+    path: "{{ grafana_server.socket }}"
   when:
+    - grafana_state != 'stopped'
     - grafana_server.protocol is defined and grafana_server.protocol == 'socket'
-    - grafana_server.socket | dirname != '/var/run'
+  tags:
+    - grafana_install
+    - grafana_configure
+    - grafana_datasources
+    - grafana_notifications
+    - grafana_dashboards
+    - grafana_run
 
-- name: Enable grafana to ports lower than port 1024
-  capabilities:
-    path: /usr/sbin/grafana-server
-    capability: CAP_NET_BIND_SERVICE+ep
-    state: present
-  when:
-    - grafana_port | int <= 1024
-    - grafana_cap_net_bind_service
+- include: api_keys.yml
+  when: grafana_api_keys | length > 0
+  tags:
+    - grafana_configure
+    - grafana_run
 
-- name: Enable and start Grafana systemd unit
-  systemd:
-    name: grafana-server
-    enabled: "{{ grafana_enabled }}"
-    state: "{{ 'stopped' if grafana_state == 'stopped' else 'started' }}"
-    daemon_reload: true
+- include: datasources.yml
+  when: grafana_datasources != []
+  tags:
+    - grafana_configure
+    - grafana_datasources
+    - grafana_run
+
+- include: notifications.yml
+  when: grafana_alert_notifications | length > 0
+  tags:
+    - grafana_configure
+    - grafana_notifications
+    - grafana_run
+
+- name: "Check if there are any dashboards in local {{ grafana_dashboards_dir }}"
+  become: false
+  set_fact:
+    found_dashboards: "{{ lookup('fileglob', grafana_dashboards_dir + '/*.json', wantlist=True) }}"
+  tags:
+    - grafana_configure
+    - grafana_dashboards
+    - grafana_run
+
+- include: dashboards.yml
+  when: grafana_dashboards | length > 0 or found_dashboards | length > 0
+  tags:
+    - grafana_configure
+    - grafana_dashboards
+    - grafana_run
